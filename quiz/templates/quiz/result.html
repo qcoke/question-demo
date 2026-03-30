@@ -7,15 +7,19 @@
 </head>
 <body>
   <h1>测试结果</h1>
-  <p>你的得分：{{ score }} 分</p>
-  <p>答对 {{ correct_count }} / {{ total }} 题</p>
+  <p>测试编号：{{ attempt.id }}</p>
+  <p>你的得分：{{ attempt.score }} 分</p>
+  <p>答对 {{ attempt.correct_count }} / {{ attempt.total_questions }} 题</p>
+  <p>完成时间：{{ attempt.finished_at }}</p>
+  <p>总耗时：{{ attempt.duration_seconds }} 秒</p>
 
   <h2>答题详情</h2>
   {% for item in review_items %}
     <hr>
-    <p><strong>题目：</strong>{{ item.question.stem }}</p>
-    <p><strong>你的答案：</strong>{{ item.user_answer|default:"未作答" }}</p>
+    <p><strong>第 {{ item.order }} 题：</strong>{{ item.question.stem }}</p>
+    <p><strong>你的答案：</strong>{{ item.selected_option|default:"未作答" }}</p>
     <p><strong>正确答案：</strong>{{ item.question.correct_option }}</p>
+    <p><strong>本题耗时：</strong>{{ item.time_spent_seconds }} 秒</p>
     <p>
       <strong>结果：</strong>
       {% if item.is_correct %}

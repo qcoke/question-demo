@@ -9,7 +9,9 @@
 - 所有题目均为单选题（A/B/C/D）
 - 题目范围为 20 以内加减法
 - 每次模拟测试随机抽取 10 道题
-- 前端为最简单的 Django Template 表单提交
+- 答题模式为逐题作答（不可跳题）
+- 每次测试会生成独立记录，并保存每题作答与耗时
+- 可在 Django Admin 查看题目、测试记录、每题作答明细
 
 ## 快速启动
 
@@ -31,17 +33,33 @@ python3 manage.py migrate
 python3 manage.py init_questions
 ```
 
-4. 启动服务
+4. 创建管理员账号（用于查看后台数据）
+
+```bash
+python3 manage.py createsuperuser
+```
+
+5. 启动服务
 
 ```bash
 python3 manage.py runserver
 ```
 
-5. 打开浏览器访问
+6. 打开浏览器访问
 
 ```text
 http://127.0.0.1:8000/
 ```
+
+7. 访问管理后台查看数据流向
+
+```text
+http://127.0.0.1:8000/admin/
+```
+
+后台关键数据：
+- Quiz attempts：每次测试一条记录，包含分数、正确数、总耗时
+- Attempt answers：每题作答详情，包含作答选项、正误、本题耗时
 
 ## 常用命令
 
