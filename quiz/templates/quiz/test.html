@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>20 以内加减法模拟测试</title>
+</head>
+<body>
+  <h1>20 以内加减法模拟测试</h1>
+  <p>本次共 {{ questions|length }} 道单选题，请选择你认为正确的答案后提交。</p>
+
+  <form action="{% url 'submit_test' %}" method="post">
+    {% csrf_token %}
+
+    {% for question in questions %}
+      <hr>
+      <p><strong>第 {{ forloop.counter }} 题：</strong>{{ question.stem }}</p>
+      <input type="hidden" name="question_ids" value="{{ question.id }}">
+
+      <label>
+        <input type="radio" name="question_{{ question.id }}" value="A" required>
+        A. {{ question.option_a }}
+      </label><br>
+      <label>
+        <input type="radio" name="question_{{ question.id }}" value="B">
+        B. {{ question.option_b }}
+      </label><br>
+      <label>
+        <input type="radio" name="question_{{ question.id }}" value="C">
+        C. {{ question.option_c }}
+      </label><br>
+      <label>
+        <input type="radio" name="question_{{ question.id }}" value="D">
+        D. {{ question.option_d }}
+      </label><br>
+    {% endfor %}
+
+    <br>
+    <button type="submit">提交试卷</button>
+  </form>
+</body>
+</html>
