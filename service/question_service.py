@@ -107,6 +107,10 @@ def build_entry_cmd() -> list:
     return entry_cmd
 
 
+# Django settings 模块（可通过环境变量或 service.env 中的 DJANGO_SETTINGS_MODULE 覆盖）
+DEFAULT_DJANGO_SETTINGS = "config.settings"
+
+
 # ──────────────────────────────────────────────
 # Windows 服务类
 # ──────────────────────────────────────────────
@@ -123,6 +127,7 @@ class QuestionDemoService(win32serviceutil.ServiceFramework):
         # 用于通知 SCM 服务已停止的事件
         self._stop_event = win32event.CreateEvent(None, 0, 0, None)
         self._process = None
+        self._log_fd = None  # 子进程的日志文件句柄
         self._log = get_logger()
 
     # ── 服务启动 ──────────────────────────────
@@ -139,8 +144,8 @@ class QuestionDemoService(win32serviceutil.ServiceFramework):
         )
         self._log.info("服务启动，工作目录：%s", BASE_DIR)
 
-        # 确保 DJANGO_SETTINGS_MODULE 已设置
-        os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+        # 确保 DJANGO_SETTINGS_MODULE 已设置（可通过环境变量或 service.env 覆盖）
+        os.environ.setdefault("DJANGO_SETTINGS_MODULE", DEFAULT_DJANGO_SETTINGS)
 
         cmd = build_entry_cmd()
         self._log.info("入口命令：%s", " ".join(cmd))
@@ -164,20 +169,20 @@ class QuestionDemoService(win32serviceutil.ServiceFramework):
     def _start_subprocess(self, cmd: list) -> None:
         """启动 Web 应用子进程，将 stdout/stderr 重定向到日志文件。"""
         LOG_DIR.mkdir(parents=True, exist_ok=True)
-        log_fd = open(LOG_FILE, "a", encoding="utf-8", buffering=1)
-        log_fd.write(
+        self._log_fd = open(LOG_FILE, "a", encoding="utf-8", buffering=1)
+        self._log_fd.write(
             f"\n{'='*60}\n"
             f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 服务启动\n"
             f"命令：{' '.join(cmd)}\n"
             f"{'='*60}\n"
         )
-        log_fd.flush()
+        self._log_fd.flush()
 
         self._process = subprocess.Popen(
             cmd,
             cwd=str(BASE_DIR),
-            stdout=log_fd,
-            stderr=log_fd,
+            stdout=self._log_fd,
+            stderr=self._log_fd,
             # 在 Windows 上不创建新控制台窗口
             creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
         )
@@ -209,10 +214,11 @@ class QuestionDemoService(win32serviceutil.ServiceFramework):
         win32event.SetEvent(self._stop_event)
 
     def _terminate_subprocess(self) -> None:
-        """优雅终止子进程：先 terminate，超时后 kill。"""
+        """优雅终止子进程：先 terminate，超时后 kill；最后关闭日志文件句柄。"""
         if self._process is None:
             return
         if self._process.poll() is not None:
+            self._close_log_fd()
             return  # 已退出
         self._log.info("正在终止子进程 PID=%d …", self._process.pid)
         try:
@@ -226,6 +232,17 @@ class QuestionDemoService(win32serviceutil.ServiceFramework):
             self._log.info("子进程已强制终止")
         except Exception as exc:
             self._log.exception("终止子进程时发生异常：%s", exc)
+        finally:
+            self._close_log_fd()
+
+    def _close_log_fd(self) -> None:
+        """关闭子进程日志文件句柄（若已打开）。"""
+        if self._log_fd is not None and not self._log_fd.closed:
+            try:
+                self._log_fd.close()
+            except Exception:
+                pass
+            self._log_fd = None
 
 
 # ──────────────────────────────────────────────
