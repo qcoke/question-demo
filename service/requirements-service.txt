@@ -1,0 +1,8 @@
+# service/requirements-service.txt
+# Windows 服务运行所需的额外依赖
+# 安装方式：pip install -r service/requirements-service.txt
+#
+# 注意：安装完 pywin32 后，需额外执行：
+#   python -m pywin32_postinstall -install
+
+pywin32>=306

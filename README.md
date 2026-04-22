@@ -74,3 +74,14 @@ python3 manage.py init_questions --reset
 ```bash
 python3 manage.py test
 ```
+
+## Windows 服务部署
+
+若需在 Windows 服务器上以后台服务（由 Windows SCM / svchost 体系托管）方式长期运行，
+请参阅 [service/README.md](service/README.md)。
+
+一键安装并启动（以管理员身份运行）：
+
+```bat
+scripts\install_service.bat
+```
