@@ -1,9 +1,11 @@
 import random
 
 from django.db import transaction
-from django.http import HttpRequest, HttpResponse
+from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
+from django.views.decorators.http import require_POST
 
 from .models import AttemptAnswer, Question, QuizAttempt
 
@@ -30,7 +32,11 @@ def start_test(request: HttpRequest) -> HttpResponse:
             ]
         )
 
-    return redirect("test_question", attempt_id=attempt.id, order=1)
+    first_item = attempt.answers.select_related("question").order_by("order").first()
+    if first_item is not None:
+        mark_question_shown(first_item)
+
+    return render(request, "quiz/test.html", {"quiz_data": build_attempt_payload(attempt)})
 
 
 def test_question(request: HttpRequest, attempt_id: int, order: int) -> HttpResponse:
@@ -51,14 +57,63 @@ def test_question(request: HttpRequest, attempt_id: int, order: int) -> HttpResp
         attempt=attempt,
         order=order,
     )
+    mark_question_shown(answer_item)
 
-    if request.method == "POST":
+    return render(
+        request,
+        "quiz/test.html",
+        {"quiz_data": build_attempt_payload(attempt, current_order=order)},
+    )
+
+
+@require_POST
+def submit_answer(request: HttpRequest, attempt_id: int) -> JsonResponse:
+    with transaction.atomic():
+        attempt = get_object_or_404(QuizAttempt.objects.select_for_update(), id=attempt_id)
+
+        if attempt.finished_at:
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "error": "attempt_finished",
+                    "result": build_result_payload(attempt),
+                },
+                status=409,
+            )
+
+        try:
+            order = int(request.POST.get("order", ""))
+        except (TypeError, ValueError):
+            return JsonResponse({"ok": False, "error": "invalid_order"}, status=400)
+
         selected_option = request.POST.get("selected_option")
         if selected_option not in {"A", "B", "C", "D"}:
-            return render(request, "quiz/invalid_request.html")
+            return JsonResponse({"ok": False, "error": "invalid_option"}, status=400)
 
-        if answer_item.selected_option is not None:
-            return redirect("test_question", attempt_id=attempt.id, order=next_order)
+        next_order = get_next_unanswered_order(attempt)
+        if next_order is None:
+            finalize_attempt(attempt)
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "error": "attempt_finished",
+                    "result": build_result_payload(attempt),
+                },
+                status=409,
+            )
+
+        if order != next_order:
+            return JsonResponse(
+                {"ok": False, "error": "out_of_order", "current_order": next_order},
+                status=409,
+            )
+
+        answer_item = get_object_or_404(
+            AttemptAnswer.objects.select_related("question"),
+            attempt=attempt,
+            order=order,
+        )
+        mark_question_shown(answer_item)
 
         answered_at = timezone.now()
         shown_at = answer_item.shown_at or answered_at
@@ -80,26 +135,22 @@ def test_question(request: HttpRequest, attempt_id: int, order: int) -> HttpResp
         next_order = get_next_unanswered_order(attempt)
         if next_order is None:
             finalize_attempt(attempt)
-            return redirect("test_result", attempt_id=attempt.id)
+            return JsonResponse(
+                {
+                    "ok": True,
+                    "completed": True,
+                    "result": build_result_payload(attempt),
+                }
+            )
 
-        return redirect("test_question", attempt_id=attempt.id, order=next_order)
+        next_item = get_object_or_404(
+            AttemptAnswer.objects.select_related("question"),
+            attempt=attempt,
+            order=next_order,
+        )
+        mark_question_shown(next_item)
 
-    if answer_item.shown_at is None:
-        answer_item.shown_at = timezone.now()
-        answer_item.save(update_fields=["shown_at"])
-
-    progress = int(((order - 1) / attempt.total_questions) * 100)
-    return render(
-        request,
-        "quiz/test.html",
-        {
-            "attempt": attempt,
-            "answer_item": answer_item,
-            "order": order,
-            "total": attempt.total_questions,
-            "progress": progress,
-        },
-    )
+        return JsonResponse({"ok": True, "completed": False, "current_order": next_order})
 
 
 def test_result(request: HttpRequest, attempt_id: int) -> HttpResponse:
@@ -143,3 +194,59 @@ def get_next_unanswered_order(attempt: QuizAttempt) -> int | None:
         .values_list("order", flat=True)
         .first()
     )
+
+
+def mark_question_shown(answer_item: AttemptAnswer) -> None:
+    if answer_item.shown_at is None:
+        answer_item.shown_at = timezone.now()
+        answer_item.save(update_fields=["shown_at"])
+
+
+def build_attempt_payload(attempt: QuizAttempt, current_order: int | None = None) -> dict:
+    answer_items = list(attempt.answers.select_related("question").order_by("order"))
+    active_order = current_order or get_next_unanswered_order(attempt) or 1
+
+    return {
+        "attemptId": attempt.id,
+        "total": attempt.total_questions,
+        "currentOrder": active_order,
+        "submitUrl": reverse("submit_answer", kwargs={"attempt_id": attempt.id}),
+        "questions": [build_client_question_payload(item) for item in answer_items],
+    }
+
+
+def build_client_question_payload(answer_item: AttemptAnswer) -> dict:
+    return {
+        "order": answer_item.order,
+        "stem": answer_item.question.stem,
+        "options": {
+            "A": answer_item.question.option_a,
+            "B": answer_item.question.option_b,
+            "C": answer_item.question.option_c,
+            "D": answer_item.question.option_d,
+        },
+    }
+
+
+def build_result_payload(attempt: QuizAttempt) -> dict:
+    review_items = list(attempt.answers.select_related("question").order_by("order"))
+    return {
+        "attemptId": attempt.id,
+        "score": attempt.score,
+        "correctCount": attempt.correct_count,
+        "totalQuestions": attempt.total_questions,
+        "durationSeconds": attempt.duration_seconds,
+        "finishedAt": attempt.finished_at.isoformat() if attempt.finished_at else None,
+        "reviewItems": [
+            {
+                "order": item.order,
+                "stem": item.question.stem,
+                "selectedOption": item.selected_option,
+                "correctOption": item.question.correct_option,
+                "isCorrect": item.is_correct,
+                "timeSpentSeconds": item.time_spent_seconds,
+            }
+            for item in review_items
+        ],
+    }
+

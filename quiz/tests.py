@@ -16,31 +16,46 @@ class QuizFlowTests(TestCase):
                 correct_option="A",
             )
 
-    def test_start_test_returns_ten_questions(self):
+    def test_start_test_renders_single_page_bootstrap_data(self):
         response = self.client.get(reverse("start_test"))
-        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.status_code, 200)
 
         attempt = QuizAttempt.objects.first()
         self.assertIsNotNone(attempt)
         self.assertEqual(attempt.total_questions, 10)
         self.assertEqual(attempt.answers.count(), 10)
+        self.assertIn("quiz_data", response.context)
+        self.assertEqual(len(response.context["quiz_data"]["questions"]), 10)
+        self.assertEqual(
+            response.context["quiz_data"]["submitUrl"],
+            reverse("submit_answer", kwargs={"attempt_id": attempt.id}),
+        )
+        self.assertEqual(attempt.answers.filter(shown_at__isnull=False).count(), 1)
 
-    def test_per_question_flow_scores_correctly(self):
+    def test_ajax_submit_flow_scores_correctly(self):
         self.client.get(reverse("start_test"))
 
         attempt = QuizAttempt.objects.first()
         self.assertIsNotNone(attempt)
 
         answer_items = list(attempt.answers.select_related("question").order_by("order"))
-        for item in answer_items:
-            self.client.get(
-                reverse("test_question", kwargs={"attempt_id": attempt.id, "order": item.order})
-            )
+        for idx, item in enumerate(answer_items, start=1):
             response = self.client.post(
-                reverse("test_question", kwargs={"attempt_id": attempt.id, "order": item.order}),
-                {"selected_option": item.question.correct_option},
+                reverse("submit_answer", kwargs={"attempt_id": attempt.id}),
+                {"order": item.order, "selected_option": item.question.correct_option},
+                HTTP_X_REQUESTED_WITH="XMLHttpRequest",
             )
-            self.assertEqual(response.status_code, 302)
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+
+            if idx < len(answer_items):
+                self.assertFalse(payload["completed"])
+                self.assertEqual(payload["current_order"], item.order + 1)
+            else:
+                self.assertTrue(payload["completed"])
+                self.assertEqual(payload["result"]["score"], 100)
+                self.assertEqual(payload["result"]["correctCount"], 10)
+                self.assertEqual(len(payload["result"]["reviewItems"]), 10)
 
         attempt.refresh_from_db()
         self.assertIsNotNone(attempt.finished_at)
@@ -57,24 +72,20 @@ class QuizFlowTests(TestCase):
             10,
         )
 
-        result_response = self.client.get(
-            reverse("test_result", kwargs={"attempt_id": attempt.id})
-        )
-        self.assertEqual(result_response.status_code, 200)
-
-    def test_cannot_jump_to_future_question(self):
+    def test_submit_rejects_future_order(self):
         self.client.get(reverse("start_test"))
         attempt = QuizAttempt.objects.first()
         self.assertIsNotNone(attempt)
 
-        jump_response = self.client.get(
-            reverse("test_question", kwargs={"attempt_id": attempt.id, "order": 5})
+        response = self.client.post(
+            reverse("submit_answer", kwargs={"attempt_id": attempt.id}),
+            {"order": 5, "selected_option": "A"},
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
         )
-        self.assertEqual(jump_response.status_code, 302)
-        self.assertTrue(
-            jump_response.url.endswith(
-                reverse("test_question", kwargs={"attempt_id": attempt.id, "order": 1})
-            )
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(
+            response.json(),
+            {"ok": False, "error": "out_of_order", "current_order": 1},
         )
 
     def test_cannot_resubmit_answered_question(self):
@@ -84,20 +95,39 @@ class QuizFlowTests(TestCase):
 
         first_item = attempt.answers.select_related("question").get(order=1)
         self.client.post(
-            reverse("test_question", kwargs={"attempt_id": attempt.id, "order": 1}),
-            {"selected_option": first_item.question.correct_option},
+            reverse("submit_answer", kwargs={"attempt_id": attempt.id}),
+            {"order": 1, "selected_option": first_item.question.correct_option},
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
         )
 
         retry_response = self.client.post(
-            reverse("test_question", kwargs={"attempt_id": attempt.id, "order": 1}),
-            {"selected_option": "B"},
+            reverse("submit_answer", kwargs={"attempt_id": attempt.id}),
+            {"order": 1, "selected_option": "B"},
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
         )
-        self.assertEqual(retry_response.status_code, 302)
-        self.assertTrue(
-            retry_response.url.endswith(
-                reverse("test_question", kwargs={"attempt_id": attempt.id, "order": 2})
-            )
+        self.assertEqual(retry_response.status_code, 409)
+        self.assertEqual(
+            retry_response.json(),
+            {"ok": False, "error": "out_of_order", "current_order": 2},
         )
 
         first_item.refresh_from_db()
         self.assertEqual(first_item.selected_option, first_item.question.correct_option)
+
+    def test_finished_attempt_can_render_result_page(self):
+        self.client.get(reverse("start_test"))
+        attempt = QuizAttempt.objects.first()
+        self.assertIsNotNone(attempt)
+
+        answer_items = list(attempt.answers.select_related("question").order_by("order"))
+        for item in answer_items:
+            self.client.post(
+                reverse("submit_answer", kwargs={"attempt_id": attempt.id}),
+                {"order": item.order, "selected_option": item.question.correct_option},
+                HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+            )
+
+        result_response = self.client.get(reverse("test_result", kwargs={"attempt_id": attempt.id}))
+        self.assertEqual(result_response.status_code, 200)
+        self.assertContains(result_response, "测试结果")
+

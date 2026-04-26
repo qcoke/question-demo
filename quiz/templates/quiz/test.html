@@ -7,39 +7,300 @@
 </head>
 <body>
   <h1>20 以内加减法模拟测试</h1>
-  <p>测试编号：{{ attempt.id }}</p>
-  <p>进度：第 {{ order }} / {{ total }} 题（已完成 {{ progress }}%）</p>
+  <p>测试编号：<span id="attempt-id"></span></p>
 
-  <form method="post">
-    {% csrf_token %}
-    <hr>
-    <p><strong>第 {{ order }} 题：</strong>{{ answer_item.question.stem }}</p>
+  <section id="quiz-screen">
+    <p>
+      进度：第 <span id="progress-order"></span> / <span id="progress-total"></span> 题
+      （已完成 <span id="progress-percent"></span>%）
+    </p>
 
-    <label>
-      <input type="radio" name="selected_option" value="A" required>
-      A. {{ answer_item.question.option_a }}
-    </label><br>
-    <label>
-      <input type="radio" name="selected_option" value="B">
-      B. {{ answer_item.question.option_b }}
-    </label><br>
-    <label>
-      <input type="radio" name="selected_option" value="C">
-      C. {{ answer_item.question.option_c }}
-    </label><br>
-    <label>
-      <input type="radio" name="selected_option" value="D">
-      D. {{ answer_item.question.option_d }}
-    </label><br>
+    <form id="question-form">
+      {% csrf_token %}
+      <hr>
+      <p>
+        <strong>第 <span id="question-order"></span> 题：</strong>
+        <span id="question-stem"></span>
+      </p>
 
-    <br>
-    <button type="submit">
-      {% if order == total %}
-        提交并查看结果
-      {% else %}
-        下一题
-      {% endif %}
-    </button>
-  </form>
+      <label>
+        <input type="radio" name="selected_option" value="A" required>
+        A. <span id="option-A"></span>
+      </label><br>
+      <label>
+        <input type="radio" name="selected_option" value="B">
+        B. <span id="option-B"></span>
+      </label><br>
+      <label>
+        <input type="radio" name="selected_option" value="C">
+        C. <span id="option-C"></span>
+      </label><br>
+      <label>
+        <input type="radio" name="selected_option" value="D">
+        D. <span id="option-D"></span>
+      </label><br>
+
+      <br>
+      <button type="submit" id="submit-button">下一题</button>
+      <p id="submit-message" style="display: none;" aria-live="polite"></p>
+    </form>
+  </section>
+
+  <section id="result-screen" style="display: none;">
+    <h2>测试结果</h2>
+    <p>你的得分：<span id="result-score"></span> 分</p>
+    <p>答对 <span id="result-correct-count"></span> / <span id="result-total"></span> 题</p>
+    <p>总耗时：<span id="result-duration"></span> 秒</p>
+
+    <h3>答题详情</h3>
+    <div id="review-list"></div>
+
+    <p><a href="{% url 'start_test' %}">再做一套</a></p>
+  </section>
+
+  <noscript>
+    <p style="color: #c0392b;">此页面依赖 JavaScript 才能完成单页答题。</p>
+  </noscript>
+
+  {{ quiz_data|json_script:"quiz-data" }}
+
+  <script>
+    (function () {
+      var bootstrap = document.getElementById("quiz-data");
+      var form = document.getElementById("question-form");
+      if (!bootstrap || !form) {
+        return;
+      }
+
+      var state = JSON.parse(bootstrap.textContent);
+      state.currentIndex = Math.max(0, (state.currentOrder || 1) - 1);
+      state.isSubmitting = false;
+
+      var quizScreen = document.getElementById("quiz-screen");
+      var resultScreen = document.getElementById("result-screen");
+      var submitButton = document.getElementById("submit-button");
+      var messageBox = document.getElementById("submit-message");
+      var attemptId = document.getElementById("attempt-id");
+
+      if (attemptId) {
+        attemptId.textContent = String(state.attemptId || "");
+      }
+
+      renderQuestion();
+
+      form.addEventListener("submit", function (event) {
+        event.preventDefault();
+
+        if (state.isSubmitting) {
+          return;
+        }
+
+        var checked = form.querySelector("input[name='selected_option']:checked");
+        if (!checked) {
+          showMessage("请选择一个答案后再提交。", true);
+          return;
+        }
+
+        var question = state.questions[state.currentIndex];
+        if (!question) {
+          showMessage("当前题目不存在，请刷新后重试。", true);
+          return;
+        }
+
+        state.isSubmitting = true;
+        if (submitButton) {
+          submitButton.disabled = true;
+        }
+        showMessage("提交中...", false);
+
+        var payload = new URLSearchParams();
+        payload.append("csrfmiddlewaretoken", getCsrfToken());
+        payload.append("order", String(question.order));
+        payload.append("selected_option", checked.value);
+
+        fetch(state.submitUrl, {
+          method: "POST",
+          headers: {
+            "X-Requested-With": "XMLHttpRequest",
+            "Accept": "application/json",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
+          },
+          body: payload.toString(),
+          credentials: "same-origin"
+        })
+          .then(function (response) {
+            return response.json().catch(function () {
+              return { ok: false, error: "invalid_response" };
+            }).then(function (data) {
+              return { status: response.status, ok: response.ok, data: data };
+            });
+          })
+          .then(function (result) {
+            if (result.ok && result.data.completed) {
+              renderResult(result.data.result);
+              return;
+            }
+
+            if (result.ok) {
+              state.currentIndex = Math.max(0, (result.data.current_order || (question.order + 1)) - 1);
+              renderQuestion();
+              showMessage("", false);
+              return;
+            }
+
+            handleSubmitError(result.data);
+          })
+          .catch(function () {
+            showMessage("网络异常，提交失败，请重试。", true);
+          })
+          .finally(function () {
+            state.isSubmitting = false;
+            if (submitButton) {
+              submitButton.disabled = false;
+            }
+          });
+      });
+
+      function renderQuestion() {
+        var question = state.questions[state.currentIndex];
+        if (!question) {
+          showMessage("题目数据加载失败。", true);
+          return;
+        }
+
+        var order = question.order;
+        var total = state.total || state.questions.length;
+        var progress = total ? Math.floor(((order - 1) / total) * 100) : 0;
+
+        setText("question-order", order);
+        setText("question-stem", question.stem || "");
+        setText("progress-order", order);
+        setText("progress-total", total);
+        setText("progress-percent", progress);
+        setText("option-A", question.options.A || "");
+        setText("option-B", question.options.B || "");
+        setText("option-C", question.options.C || "");
+        setText("option-D", question.options.D || "");
+
+        resetSelection();
+
+        if (submitButton) {
+          submitButton.textContent = order === total ? "提交并查看结果" : "下一题";
+        }
+      }
+
+      function renderResult(result) {
+        if (!result) {
+          showMessage("结果数据缺失，请刷新后重试。", true);
+          return;
+        }
+
+        if (quizScreen) {
+          quizScreen.style.display = "none";
+        }
+        if (resultScreen) {
+          resultScreen.style.display = "block";
+        }
+
+        setText("result-score", result.score);
+        setText("result-correct-count", result.correctCount);
+        setText("result-total", result.totalQuestions);
+        setText("result-duration", result.durationSeconds);
+
+        var reviewList = document.getElementById("review-list");
+        if (!reviewList) {
+          return;
+        }
+
+        reviewList.innerHTML = "";
+        (result.reviewItems || []).forEach(function (item) {
+          var block = document.createElement("div");
+          block.innerHTML = [
+            "<hr>",
+            "<p><strong>第 " + escapeHtml(String(item.order)) + " 题：</strong>" + escapeHtml(item.stem || "") + "</p>",
+            "<p><strong>你的答案：</strong>" + escapeHtml(item.selectedOption || "未作答") + "</p>",
+            "<p><strong>正确答案：</strong>" + escapeHtml(item.correctOption || "") + "</p>",
+            "<p><strong>本题耗时：</strong>" + escapeHtml(String(item.timeSpentSeconds || 0)) + " 秒</p>",
+            "<p><strong>结果：</strong>" + (item.isCorrect ? "正确" : "错误") + "</p>"
+          ].join("");
+          reviewList.appendChild(block);
+        });
+      }
+
+      function handleSubmitError(data) {
+        if (!data) {
+          showMessage("提交失败，请稍后重试。", true);
+          return;
+        }
+
+        if (data.error === "out_of_order" && data.current_order) {
+          state.currentIndex = Math.max(0, data.current_order - 1);
+          renderQuestion();
+          showMessage("已自动同步到当前应答题目。", true);
+          return;
+        }
+
+        if (data.error === "attempt_finished" && data.result) {
+          renderResult(data.result);
+          return;
+        }
+
+        if (data.error === "invalid_option") {
+          showMessage("请选择有效答案后再提交。", true);
+          return;
+        }
+
+        if (data.error === "invalid_order") {
+          showMessage("题目顺序异常，请刷新页面后重试。", true);
+          return;
+        }
+
+        if (data.error === "invalid_response") {
+          showMessage("服务端返回格式异常，请稍后重试。", true);
+          return;
+        }
+
+        showMessage("提交失败，请稍后重试。", true);
+      }
+
+      function resetSelection() {
+        var radios = form.querySelectorAll("input[name='selected_option']");
+        Array.prototype.forEach.call(radios, function (radio) {
+          radio.checked = false;
+        });
+      }
+
+      function getCsrfToken() {
+        var input = form.querySelector("input[name='csrfmiddlewaretoken']");
+        return input ? input.value : "";
+      }
+
+      function showMessage(message, isError) {
+        if (!messageBox) {
+          return;
+        }
+
+        messageBox.textContent = message;
+        messageBox.style.display = message ? "block" : "none";
+        messageBox.style.color = isError ? "#c0392b" : "#333";
+      }
+
+      function setText(id, value) {
+        var el = document.getElementById(id);
+        if (el) {
+          el.textContent = String(value == null ? "" : value);
+        }
+      }
+
+      function escapeHtml(value) {
+        return String(value)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/\"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+    })();
+  </script>
 </body>
 </html>
