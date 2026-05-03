@@ -1,5 +1,5 @@
-# interceptor 依赖
 pydivert>=2.1.0
 psutil>=5.9
 requests>=2.31
+pyinstaller==5.13.2
 
