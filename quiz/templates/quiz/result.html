@@ -4,6 +4,41 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>测试结果</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 24px;
+      line-height: 1.5;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 12px;
+    }
+
+    th,
+    td {
+      border: 1px solid #d0d7de;
+      padding: 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f6f8fa;
+    }
+
+    .ok {
+      color: #1a7f37;
+      font-weight: 600;
+    }
+
+    .bad {
+      color: #b42318;
+      font-weight: 600;
+    }
+  </style>
 </head>
 <body>
   <h1>测试结果</h1>
@@ -14,21 +49,36 @@
   <p>总耗时：{{ attempt.duration_seconds }} 秒</p>
 
   <h2>答题详情</h2>
-  {% for item in review_items %}
-    <hr>
-    <p><strong>第 {{ item.order }} 题：</strong>{{ item.question.stem }}</p>
-    <p><strong>你的答案：</strong>{{ item.selected_option|default:"未作答" }}</p>
-    <p><strong>正确答案：</strong>{{ item.question.correct_option }}</p>
-    <p><strong>本题耗时：</strong>{{ item.time_spent_seconds }} 秒</p>
-    <p>
-      <strong>结果：</strong>
-      {% if item.is_correct %}
-        正确
-      {% else %}
-        错误
-      {% endif %}
-    </p>
-  {% endfor %}
+  <table>
+    <thead>
+      <tr>
+        <th>题号</th>
+        <th>题目</th>
+        <th>你的答案</th>
+        <th>正确答案</th>
+        <th>本题耗时(秒)</th>
+        <th>结果</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in review_items %}
+        <tr>
+          <td>{{ item.order }}</td>
+          <td>{{ item.question.stem }}</td>
+          <td>{{ item.selected_option|default:"未作答" }}</td>
+          <td>{{ item.question.correct_option }}</td>
+          <td>{{ item.time_spent_seconds }}</td>
+          <td>
+            {% if item.is_correct %}
+              <span class="ok">正确</span>
+            {% else %}
+              <span class="bad">错误</span>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
 
   <p><a href="{% url 'start_test' %}">再做一套</a></p>
 </body>

@@ -30,6 +30,10 @@ class QuizFlowTests(TestCase):
             response.context["quiz_data"]["submitUrl"],
             reverse("submit_answer", kwargs={"attempt_id": attempt.id}),
         )
+        self.assertEqual(
+            response.context["quiz_data"]["resultUrl"],
+            reverse("test_result", kwargs={"attempt_id": attempt.id}),
+        )
         self.assertEqual(attempt.answers.filter(shown_at__isnull=False).count(), 1)
 
     def test_ajax_submit_flow_scores_correctly(self):
@@ -130,4 +134,6 @@ class QuizFlowTests(TestCase):
         result_response = self.client.get(reverse("test_result", kwargs={"attempt_id": attempt.id}))
         self.assertEqual(result_response.status_code, 200)
         self.assertContains(result_response, "测试结果")
+        self.assertContains(result_response, "<table>", html=False)
+        self.assertContains(result_response, "题号")
 

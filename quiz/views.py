@@ -240,6 +240,7 @@ def build_attempt_payload(attempt: QuizAttempt, current_order: int | None = None
         "total": attempt.total_questions,
         "currentOrder": active_order,
         "submitUrl": reverse("submit_answer", kwargs={"attempt_id": attempt.id}),
+        "resultUrl": reverse("test_result", kwargs={"attempt_id": attempt.id}),
         "questions": [build_client_question_payload(item) for item in answer_items],
     }
 

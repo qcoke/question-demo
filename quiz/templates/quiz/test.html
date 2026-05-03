@@ -46,18 +46,6 @@
     </form>
   </section>
 
-  <section id="result-screen" style="display: none;">
-    <h2>测试结果</h2>
-    <p>你的得分：<span id="result-score"></span> 分</p>
-    <p>答对 <span id="result-correct-count"></span> / <span id="result-total"></span> 题</p>
-    <p>总耗时：<span id="result-duration"></span> 秒</p>
-
-    <h3>答题详情</h3>
-    <div id="review-list"></div>
-
-    <p><a href="{% url 'start_test' %}">再做一套</a></p>
-  </section>
-
   <noscript>
     <p style="color: #c0392b;">此页面依赖 JavaScript 才能完成单页答题。</p>
   </noscript>
@@ -76,8 +64,6 @@
       state.currentIndex = Math.max(0, (state.currentOrder || 1) - 1);
       state.isSubmitting = false;
 
-      var quizScreen = document.getElementById("quiz-screen");
-      var resultScreen = document.getElementById("result-screen");
       var submitButton = document.getElementById("submit-button");
       var messageBox = document.getElementById("submit-message");
       var attemptId = document.getElementById("attempt-id");
@@ -137,7 +123,7 @@
           })
           .then(function (result) {
             if (result.ok && result.data.completed) {
-              renderResult(result.data.result);
+              redirectToResultPage(result.data.result);
               return;
             }
 
@@ -189,42 +175,18 @@
         }
       }
 
-      function renderResult(result) {
-        if (!result) {
-          showMessage("结果数据缺失，请刷新后重试。", true);
+      function redirectToResultPage(result) {
+        var url = state.resultUrl;
+        if (!url && result && result.attemptId) {
+          url = "/attempt/" + String(result.attemptId) + "/result/";
+        }
+
+        if (!url) {
+          showMessage("无法跳转结果页，请刷新后重试。", true);
           return;
         }
 
-        if (quizScreen) {
-          quizScreen.style.display = "none";
-        }
-        if (resultScreen) {
-          resultScreen.style.display = "block";
-        }
-
-        setText("result-score", result.score);
-        setText("result-correct-count", result.correctCount);
-        setText("result-total", result.totalQuestions);
-        setText("result-duration", result.durationSeconds);
-
-        var reviewList = document.getElementById("review-list");
-        if (!reviewList) {
-          return;
-        }
-
-        reviewList.innerHTML = "";
-        (result.reviewItems || []).forEach(function (item) {
-          var block = document.createElement("div");
-          block.innerHTML = [
-            "<hr>",
-            "<p><strong>第 " + escapeHtml(String(item.order)) + " 题：</strong>" + escapeHtml(item.stem || "") + "</p>",
-            "<p><strong>你的答案：</strong>" + escapeHtml(item.selectedOption || "未作答") + "</p>",
-            "<p><strong>正确答案：</strong>" + escapeHtml(item.correctOption || "") + "</p>",
-            "<p><strong>本题耗时：</strong>" + escapeHtml(String(item.timeSpentSeconds || 0)) + " 秒</p>",
-            "<p><strong>结果：</strong>" + (item.isCorrect ? "正确" : "错误") + "</p>"
-          ].join("");
-          reviewList.appendChild(block);
-        });
+        window.location.href = url;
       }
 
       function handleSubmitError(data) {
@@ -241,7 +203,7 @@
         }
 
         if (data.error === "attempt_finished" && data.result) {
-          renderResult(data.result);
+          redirectToResultPage(data.result);
           return;
         }
 
@@ -292,14 +254,6 @@
         }
       }
 
-      function escapeHtml(value) {
-        return String(value)
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-          .replace(/\"/g, "&quot;")
-          .replace(/'/g, "&#39;");
-      }
     })();
   </script>
 </body>
