@@ -1,3 +1,4 @@
+import logging
 import random
 
 from django.db import transaction
@@ -11,6 +12,7 @@ from .models import AttemptAnswer, Question, QuizAttempt
 
 
 TEST_SIZE = 10
+LOG = logging.getLogger(__name__)
 
 
 def start_test(request: HttpRequest) -> HttpResponse:
@@ -68,10 +70,19 @@ def test_question(request: HttpRequest, attempt_id: int, order: int) -> HttpResp
 
 @require_POST
 def submit_answer(request: HttpRequest, attempt_id: int) -> JsonResponse:
+    raw_order = request.POST.get("order")
+    raw_option = request.POST.get("selected_option")
+    client_ip = request.META.get("REMOTE_ADDR", "-")
+    LOG.info(
+        "submit_answer received attempt_id=%s order=%r selected_option=%r from %s",
+        attempt_id, raw_order, raw_option, client_ip,
+    )
+
     with transaction.atomic():
         attempt = get_object_or_404(QuizAttempt.objects.select_for_update(), id=attempt_id)
 
         if attempt.finished_at:
+            LOG.info("submit_answer attempt_id=%s already finished", attempt_id)
             return JsonResponse(
                 {
                     "ok": False,
@@ -82,17 +93,23 @@ def submit_answer(request: HttpRequest, attempt_id: int) -> JsonResponse:
             )
 
         try:
-            order = int(request.POST.get("order", ""))
+            order = int(raw_order or "")
         except (TypeError, ValueError):
+            LOG.warning("submit_answer attempt_id=%s invalid_order=%r", attempt_id, raw_order)
             return JsonResponse({"ok": False, "error": "invalid_order"}, status=400)
 
-        selected_option = request.POST.get("selected_option")
+        selected_option = raw_option
         if selected_option not in {"A", "B", "C", "D"}:
+            LOG.warning(
+                "submit_answer attempt_id=%s order=%s rejected invalid_option=%r",
+                attempt_id, order, selected_option,
+            )
             return JsonResponse({"ok": False, "error": "invalid_option"}, status=400)
 
         next_order = get_next_unanswered_order(attempt)
         if next_order is None:
             finalize_attempt(attempt)
+            LOG.info("submit_answer attempt_id=%s finished during submit", attempt_id)
             return JsonResponse(
                 {
                     "ok": False,
@@ -103,6 +120,10 @@ def submit_answer(request: HttpRequest, attempt_id: int) -> JsonResponse:
             )
 
         if order != next_order:
+            LOG.warning(
+                "submit_answer attempt_id=%s out_of_order received=%s expected=%s",
+                attempt_id, order, next_order,
+            )
             return JsonResponse(
                 {"ok": False, "error": "out_of_order", "current_order": next_order},
                 status=409,
@@ -131,10 +152,18 @@ def submit_answer(request: HttpRequest, attempt_id: int) -> JsonResponse:
                 "time_spent_seconds",
             ]
         )
+        LOG.info(
+            "submit_answer attempt_id=%s order=%s saved option=%s correct=%s elapsed=%ss",
+            attempt_id, order, selected_option, answer_item.is_correct, elapsed,
+        )
 
         next_order = get_next_unanswered_order(attempt)
         if next_order is None:
             finalize_attempt(attempt)
+            LOG.info(
+                "submit_answer attempt_id=%s completed score=%s correct=%s/%s",
+                attempt_id, attempt.score, attempt.correct_count, attempt.total_questions,
+            )
             return JsonResponse(
                 {
                     "ok": True,
